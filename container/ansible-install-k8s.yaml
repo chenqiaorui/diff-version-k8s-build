@@ -1,0 +1,109 @@
+---
+- hosts: all # run on the "all" hosts category from ansible-hosts.txt
+  # become means be superuser
+  #become: true
+  remote_user: root
+  tasks:
+  - name: close selinux forever
+    lineinfile:
+      dest: /etc/selinux/config
+      regexp: "^SELINUX="
+      line: "SELINUX=disabled"
+    
+  - name: load module for k8s
+    shell:
+      cmd: |
+        cat << EOF > /etc/modules-load.d/containerd.conf
+        overlay
+        br_netfilter
+        EOF
+  - name: install relative modules
+    shell: |
+       modprobe overlay
+       modprobe br_netfilter
+  - name: added filter rules
+    shell:
+      cmd: |
+        cat << EOF > /etc/sysctl.d/99-kubernetes-cri.conf
+        net.bridge.bridge-nf-call-ip6tables = 1
+        net.bridge.bridge-nf-call-iptables = 1
+        net.ipv4.ip_forward = 1
+        user.max_user_namespaces=28633
+        EOF
+  - name: apply the rule
+    shell:
+      sysctl -p /etc/sysctl.d/99-kubernetes-cri.conf
+  - name: load ipvs modules
+    shell:
+      cmd: |
+        cat > /etc/sysconfig/modules/ipvs.modules <<EOF
+        #!/bin/bash
+        modprobe -- ip_vs
+        modprobe -- ip_vs_rr
+        modprobe -- ip_vs_wrr
+        modprobe -- ip_vs_sh
+        modprobe -- nf_conntrack_ipv4
+        EOF
+  - name: execute config
+    shell:
+      chmod 755 /etc/sysconfig/modules/ipvs.modules && bash /etc/sysconfig/modules/ipvs.modules && lsmod | grep -e ip_vs -e nf_conntrack_ipv4
+  - name: container package
+    copy:
+      src: /opt/container/cri-containerd-cni-1.5.2-linux-amd64.tar.gz
+      dest: /tmp/cri-containerd-cni-1.5.2-linux-amd64.tar.gz
+
+  - name: decompression 
+    shell:
+      tar -zxvf /tmp/cri-containerd-cni-1.5.2-linux-amd64.tar.gz -C /
+  - name: generate containerd config
+    shell:
+      cmd: |
+        mkdir -p /etc/containerd
+        containerd config default > /etc/containerd/config.toml
+  - name: modify toml and start containerd
+    shell:
+      cmd: |
+        sed -i -e "s/SystemdCgroup = false/SystemdCgroup = true/g" /etc/containerd/config.toml
+        sed -i -e "s/sandbox_image = \"k8s.gcr.io\/pause:3.5\"/sandbox_image = \"registry.aliyuncs.com\/google_containers\/pause:3.4.1\"/g" /etc/containerd/config.toml
+        sed -i -e "s/runtime_type = \"io.containerd.runc.v2\"/runtime_type = \"io.containerd.runtime.v1.linux\"/g" /etc/containerd/config.toml
+        systemctl enable containerd
+        systemctl start containerd
+        #systemctl restart containerd
+        #crictl version
+  - name: add kubernetes repo and install kube
+    shell:
+      cmd: |
+        cat <<EOF > /etc/yum.repos.d/kubernetes.repo
+        [kubernetes]
+        name=Kubernetes
+        baseurl=http://mirrors.aliyun.com/kubernetes/yum/repos/kubernetes-el7-x86_64
+        enabled=1
+        gpgcheck=1
+        repo_gpgcheck=1
+        gpgkey=http://mirrors.aliyun.com/kubernetes/yum/doc/yum-key.gpg
+               http://mirrors.aliyun.com/kubernetes/yum/doc/rpm-package-key.gpg
+        EOF
+        yum makecache fast
+        yum install kubelet kubeadm kubectl -y
+        systemctl enable kubelet.service
+    run_once: true
+  - name: disable swap
+    shell: 
+      cmd: |
+        swapoff -a
+        echo "vm.swappiness=0" >> /etc/sysctl.d/99-kubernetes-cri.conf
+        sysctl -p /etc/sysctl.d/99-kubernetes-cri.conf
+  - name: copy kubeadm
+    copy:
+      src: /opt/container/kubeadm.yaml
+      dest: /tmp/kubeadm.yaml
+  - name: kubeadm pull config 
+    command: kubeadm config images pull --config /tmp/kubeadm.yaml
+  - name: set host name
+    shell:
+      cmd: |
+        cat <<EOF > /etc/hosts
+        192.168.1.146 master
+        192.168.1.180 work1
+        192.168.1.181 work2
+        EOF

@@ -1,0 +1,8 @@
+---
+- hosts: masters
+  #become: true # 允许以其他用户执行任务
+  remote_user: root
+  
+  tasks:
+  - name: kubernetes init 
+    command: kubeadm init --config /tmp/kubeadm.yaml --ignore-preflight-errors=Swap

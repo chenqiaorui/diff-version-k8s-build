@@ -1,0 +1,84 @@
+---
+- hosts: masters
+  become: true # 允许以其他用户执行任务
+  remote_user: centos
+  
+  # 引用外部变量文件
+  vars_files:
+    - ansible-vars.yml
+
+  # docker 加入资源控制组control group
+  tasks:
+  - name: set docker to use systemd cgroups driver
+    copy:
+      dest: "/etc/docker/daemon.json"
+      content: |
+        {
+          "exec-opts": ["native.cgroupdriver=systemd"]
+        }
+  # 服务管理service start/restart
+  - name: restart docker
+    service:
+      name: docker
+      state: restarted
+  
+  - name: create .kube directory in user name
+    file:
+      path: "{{ home_dir }}/.kube"
+      state: directory
+      owner: 1000
+      group: 994
+
+  - name: set k8s kubeadm pull images repo
+    command: kubeadm config images pull --image-repository="registry.aliyuncs.com/google_containers"
+     
+  - name: resolve images problems
+    shell: |
+      docker pull docker.io/coredns/coredns:1.8.0 
+      docker tag docker.io/coredns/coredns:1.8.0 registry.aliyuncs.com/google_containers/coredns:v1.8.0
+  - name: set bridge filter rules
+    shell: |
+      cat << EOF > /etc/sysctl.d/99-kubernetes-cri.conf
+      net.bridge.bridge-nf-call-ip6tables = 1
+      net.bridge.bridge-nf-call-iptables = 1
+      net.ipv4.ip_forward = 1
+      user.max_user_namespaces=28633
+      EOF
+      sysctl -p /etc/sysctl.d/99-kubernetes-cri.conf
+  - name: copy kubeadm 
+    copy:
+      src: /opt/k8s/kubeadm.yaml
+      dest: "{{ home_dir }}/.kube/kubeadm.yaml"
+  # 执行shell命令
+  - name: Initialize Kubernetes cluster
+    command: "kubeadm init --config {{ home_dir }}/.kube/kubeadm.yaml"
+    args:
+      creates: /etc/kubernetes/admin.conf # skip this task if the file already exists
+    register: kube_init # task执行结果存到kube_init
+  # debug模块打印输出
+  - name: show kube init info
+    debug:
+      var: kube_init
+
+  - name: Configure .kube/config files in user home
+    copy:
+      src: /etc/kubernetes/admin.conf
+      dest: "{{ home_dir }}/.kube/config"
+      remote_src: yes
+      owner: 1000
+      group: 994
+
+  - name: restart kubelet for config changes
+    service:
+      name: kubelet
+      state: restarted
+
+  - name: get calico networking
+    copy:
+      src: /opt/k8s/calico.yaml
+      dest: "{{ home_dir }}/calico.yaml"
+      #https://projectcalico.docs.tigera.io/manifests/calico.yaml
+      
+  - name: apply calico networking
+    become: no
+    command: kubectl apply -f "{{ home_dir }}/calico.yaml"

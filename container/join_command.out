@@ -1,0 +1,1 @@
+kubeadm join 192.168.1.146:6443 --token qh0msu.1tom101moeqkp2ww --discovery-token-ca-cert-hash sha256:29111ceebd24aeb676d965b3950734d665b0bc044af30150bc5d06aa3e73f0ff
