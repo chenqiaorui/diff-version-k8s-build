@@ -1,6 +1,7 @@
 # diff-version-k8s-build
-ansible脚本搭建K8s。
+K8s集群搭建
 
+```
 ### 项目目录
 .
 ├── containerd
@@ -38,8 +39,6 @@ ansible脚本搭建K8s。
 ├── k8s\346\236\266\346\236\204\345\233\276.pos
 └── README.md
 
-
-```
 Note:
 1. containerd 目录存放：基于containerd搭建k8s。
 2. k8s-component 目录存放：k8s常用组件部署。
